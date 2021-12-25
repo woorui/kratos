@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	nethttp "net/http"
 	"testing"
 	"time"
@@ -111,7 +111,17 @@ func (*mockDiscovery) GetService(ctx context.Context, serviceName string) ([]*re
 }
 
 func (*mockDiscovery) Watch(ctx context.Context, serviceName string) (registry.Watcher, error) {
+	return &mockWatcher{}, nil
+}
+
+type mockWatcher struct{}
+
+func (*mockWatcher) Next() ([]*registry.ServiceInstance, error) {
 	return nil, nil
+}
+
+func (*mockWatcher) Stop() error {
+	return nil
 }
 
 func TestWithDiscovery(t *testing.T) {
@@ -125,7 +135,7 @@ func TestWithDiscovery(t *testing.T) {
 func TestDefaultRequestEncoder(t *testing.T) {
 	req1 := &nethttp.Request{
 		Header: make(nethttp.Header),
-		Body:   ioutil.NopCloser(bytes.NewBufferString("{\"a\":\"1\", \"b\": 2}")),
+		Body:   io.NopCloser(bytes.NewBufferString("{\"a\":\"1\", \"b\": 2}")),
 	}
 	req1.Header.Set("Content-Type", "application/xml")
 
@@ -148,7 +158,7 @@ func TestDefaultResponseDecoder(t *testing.T) {
 	resp1 := &nethttp.Response{
 		Header:     make(nethttp.Header),
 		StatusCode: 200,
-		Body:       ioutil.NopCloser(bytes.NewBufferString("{\"a\":\"1\", \"b\": 2}")),
+		Body:       io.NopCloser(bytes.NewBufferString("{\"a\":\"1\", \"b\": 2}")),
 	}
 	v1 := &struct {
 		A string `json:"a"`
@@ -162,7 +172,7 @@ func TestDefaultResponseDecoder(t *testing.T) {
 	resp2 := &nethttp.Response{
 		Header:     make(nethttp.Header),
 		StatusCode: 200,
-		Body:       ioutil.NopCloser(bytes.NewBufferString("{badjson}")),
+		Body:       io.NopCloser(bytes.NewBufferString("{badjson}")),
 	}
 	v2 := &struct {
 		A string `json:"a"`
@@ -181,14 +191,14 @@ func TestDefaultErrorDecoder(t *testing.T) {
 	resp1 := &nethttp.Response{
 		Header:     make(nethttp.Header),
 		StatusCode: 300,
-		Body:       ioutil.NopCloser(bytes.NewBufferString("{\"foo\":\"bar\"}")),
+		Body:       io.NopCloser(bytes.NewBufferString("{\"foo\":\"bar\"}")),
 	}
 	assert.Error(t, DefaultErrorDecoder(context.TODO(), resp1))
 
 	resp2 := &nethttp.Response{
 		Header:     make(nethttp.Header),
 		StatusCode: 500,
-		Body:       ioutil.NopCloser(bytes.NewBufferString("{\"code\":54321, \"message\": \"hi\", \"reason\": \"FOO\"}")),
+		Body:       io.NopCloser(bytes.NewBufferString("{\"code\":54321, \"message\": \"hi\", \"reason\": \"FOO\"}")),
 	}
 	err2 := DefaultErrorDecoder(context.TODO(), resp2)
 	assert.Error(t, err2)
@@ -202,4 +212,36 @@ func TestCodecForResponse(t *testing.T) {
 	resp.Header.Set("Content-Type", "application/xml")
 	c := CodecForResponse(resp)
 	assert.Equal(t, "xml", c.Name())
+}
+
+func TestNewClient(t *testing.T) {
+	_, err := NewClient(context.Background(), WithEndpoint("127.0.0.1:8888"))
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = NewClient(context.Background(), WithEndpoint("127.0.0.1:9999"), WithTLSConfig(&tls.Config{ServerName: "www.kratos.com", RootCAs: nil}))
+	if err != nil {
+		t.Error(err)
+	}
+	client, err := NewClient(context.Background(), WithDiscovery(&mockDiscovery{}), WithEndpoint("discovery:///go-kratos"))
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = NewClient(context.Background(), WithDiscovery(&mockDiscovery{}), WithEndpoint("discovery:///go-kratos"))
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = NewClient(context.Background(), WithDiscovery(&mockDiscovery{}), WithEndpoint("127.0.0.1:8888"))
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = NewClient(context.Background(), WithDiscovery(&mockDiscovery{}), WithEndpoint("https://go-kratos.dev/"))
+	if err == nil {
+		t.Error("err should not be equal to nil")
+	}
+
+	err = client.Invoke(context.Background(), "POST", "/go", map[string]string{"name": "kratos"}, nil, EmptyCallOption{})
+	if err == nil {
+		t.Error("err should not be equal to nil")
+	}
 }

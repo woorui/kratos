@@ -5,7 +5,6 @@ import (
 
 	"github.com/go-kratos/kratos/v2/registry"
 	"github.com/go-kratos/kratos/v2/selector"
-	"github.com/go-kratos/kratos/v2/selector/node"
 	"github.com/go-kratos/kratos/v2/selector/p2c"
 	"github.com/go-kratos/kratos/v2/selector/random"
 	"github.com/go-kratos/kratos/v2/selector/wrr"
@@ -50,20 +49,21 @@ type Builder struct {
 
 // Build creates a grpc Picker.
 func (b *Builder) Build(info base.PickerBuildInfo) gBalancer.Picker {
-	nodes := make([]selector.Node, 0)
-	subConns := make(map[string]gBalancer.SubConn)
-	for conn, info := range info.ReadySCs {
-		if _, ok := subConns[info.Address.Addr]; ok {
-			continue
-		}
-		subConns[info.Address.Addr] = conn
+	if len(info.ReadySCs) == 0 {
+		// Block the RPC until a new picker is available via UpdateState().
+		return base.NewErrPicker(gBalancer.ErrNoSubConnAvailable)
+	}
 
+	nodes := make([]selector.Node, 0)
+	for conn, info := range info.ReadySCs {
 		ins, _ := info.Address.Attributes.Value("rawServiceInstance").(*registry.ServiceInstance)
-		nodes = append(nodes, node.New(info.Address.Addr, ins))
+		nodes = append(nodes, &grpcNode{
+			Node:    selector.NewNode(info.Address.Addr, ins),
+			subConn: conn,
+		})
 	}
 	p := &Picker{
 		selector: b.builder.Build(),
-		subConns: subConns,
 	}
 	p.selector.Apply(nodes)
 	return p
@@ -71,7 +71,6 @@ func (b *Builder) Build(info base.PickerBuildInfo) gBalancer.Picker {
 
 // Picker is a grpc picker.
 type Picker struct {
-	subConns map[string]gBalancer.SubConn
 	selector selector.Selector
 }
 
@@ -80,7 +79,7 @@ func (p *Picker) Pick(info gBalancer.PickInfo) (gBalancer.PickResult, error) {
 	var filters []selector.Filter
 	if tr, ok := transport.FromClientContext(info.Ctx); ok {
 		if gtr, ok := tr.(*Transport); ok {
-			filters = gtr.Filters()
+			filters = gtr.SelectFilters()
 		}
 	}
 
@@ -88,10 +87,9 @@ func (p *Picker) Pick(info gBalancer.PickInfo) (gBalancer.PickResult, error) {
 	if err != nil {
 		return gBalancer.PickResult{}, err
 	}
-	sub := p.subConns[n.Address()]
 
 	return gBalancer.PickResult{
-		SubConn: sub,
+		SubConn: n.(*grpcNode).subConn,
 		Done: func(di gBalancer.DoneInfo) {
 			done(info.Ctx, selector.DoneInfo{
 				Err:           di.Err,
@@ -113,4 +111,9 @@ func (t Trailer) Get(k string) string {
 		return v[0]
 	}
 	return ""
+}
+
+type grpcNode struct {
+	selector.Node
+	subConn gBalancer.SubConn
 }
