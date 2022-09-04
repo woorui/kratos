@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-kratos/kratos/v2/config"
 	"github.com/go-kratos/kratos/v2/config/file"
-	"github.com/stretchr/testify/assert"
 )
 
 const _testJSON = `
@@ -107,19 +106,27 @@ func TestEnvWithPrefix(t *testing.T) {
 				switch test.expect.(type) {
 				case int:
 					if actual, err = v.Int(); err == nil {
-						assert.Equal(t, test.expect, int(actual.(int64)), "int value should be equal")
+						if !reflect.DeepEqual(test.expect.(int), int(actual.(int64))) {
+							t.Errorf("expect %v, actual %v", test.expect, actual)
+						}
 					}
 				case string:
 					if actual, err = v.String(); err == nil {
-						assert.Equal(t, test.expect, actual, "string value should be equal")
+						if !reflect.DeepEqual(test.expect.(string), actual.(string)) {
+							t.Errorf(`expect %v, actual %v`, test.expect, actual)
+						}
 					}
 				case bool:
 					if actual, err = v.Bool(); err == nil {
-						assert.Equal(t, test.expect, actual, "bool value should be equal")
+						if !reflect.DeepEqual(test.expect.(bool), actual.(bool)) {
+							t.Errorf(`expect %v, actual %v`, test.expect, actual)
+						}
 					}
 				case float64:
 					if actual, err = v.Float(); err == nil {
-						assert.Equal(t, test.expect, actual, "float64 value should be equal")
+						if !reflect.DeepEqual(test.expect.(float64), actual.(float64)) {
+							t.Errorf(`expect %v, actual %v`, test.expect, actual)
+						}
 					}
 				default:
 					actual = v.Load()
@@ -213,19 +220,27 @@ func TestEnvWithoutPrefix(t *testing.T) {
 				switch test.expect.(type) {
 				case int:
 					if actual, err = v.Int(); err == nil {
-						assert.Equal(t, test.expect, int(actual.(int64)), "int value should be equal")
+						if !reflect.DeepEqual(test.expect.(int), int(actual.(int64))) {
+							t.Errorf("expect %v, actual %v", test.expect, actual)
+						}
 					}
 				case string:
 					if actual, err = v.String(); err == nil {
-						assert.Equal(t, test.expect, actual, "string value should be equal")
+						if !reflect.DeepEqual(test.expect.(string), actual.(string)) {
+							t.Errorf(`expect %v, actual %v`, test.expect, actual)
+						}
 					}
 				case bool:
 					if actual, err = v.Bool(); err == nil {
-						assert.Equal(t, test.expect, actual, "bool value should be equal")
+						if !reflect.DeepEqual(test.expect.(bool), actual.(bool)) {
+							t.Errorf(`expect %v, actual %v`, test.expect, actual)
+						}
 					}
 				case float64:
 					if actual, err = v.Float(); err == nil {
-						assert.Equal(t, test.expect, actual, "float64 value should be equal")
+						if !reflect.DeepEqual(test.expect.(float64), actual.(float64)) {
+							t.Errorf(`expect %v, actual %v`, test.expect, actual)
+						}
 					}
 				default:
 					actual = v.Load()
@@ -246,7 +261,7 @@ func TestEnvWithoutPrefix(t *testing.T) {
 
 func Test_env_load(t *testing.T) {
 	type fields struct {
-		prefixs []string
+		prefixes []string
 	}
 	type args struct {
 		envStrings []string
@@ -260,7 +275,7 @@ func Test_env_load(t *testing.T) {
 		{
 			name: "without prefixes",
 			fields: fields{
-				prefixs: nil,
+				prefixes: nil,
 			},
 			args: args{
 				envStrings: []string{
@@ -279,7 +294,7 @@ func Test_env_load(t *testing.T) {
 		{
 			name: "empty prefix",
 			fields: fields{
-				prefixs: []string{""},
+				prefixes: []string{""},
 			},
 			args: args{
 				envStrings: []string{
@@ -298,7 +313,7 @@ func Test_env_load(t *testing.T) {
 		{
 			name: "underscore prefix",
 			fields: fields{
-				prefixs: []string{"_"},
+				prefixes: []string{"_"},
 			},
 			args: args{
 				envStrings: []string{
@@ -317,7 +332,7 @@ func Test_env_load(t *testing.T) {
 		{
 			name: "with prefixes",
 			fields: fields{
-				prefixs: []string{"KRATOS_", "FOO"},
+				prefixes: []string{"KRATOS_", "FOO"},
 			},
 			args: args{
 				envStrings: []string{
@@ -336,7 +351,7 @@ func Test_env_load(t *testing.T) {
 		{
 			name: "should not panic #1",
 			fields: fields{
-				prefixs: []string{"FOO"},
+				prefixes: []string{"FOO"},
 			},
 			args: args{
 				envStrings: []string{
@@ -349,7 +364,7 @@ func Test_env_load(t *testing.T) {
 		{
 			name: "should not panic #2",
 			fields: fields{
-				prefixs: []string{"FOO=1"},
+				prefixes: []string{"FOO=1"},
 			},
 			args: args{
 				envStrings: []string{
@@ -362,7 +377,7 @@ func Test_env_load(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := &env{
-				prefixs: tt.fields.prefixs,
+				prefixes: tt.fields.prefixes,
 			}
 			got := e.load(tt.args.envStrings)
 			if !reflect.DeepEqual(tt.want, got) {
@@ -401,4 +416,14 @@ func Test_matchPrefix(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_env_watch(t *testing.T) {
+	prefixes := []string{"BAR", "FOO"}
+	source := NewSource(prefixes...)
+	w, err := source.Watch()
+	if err != nil {
+		t.Errorf("expect no err, got %v", err)
+	}
+	_ = w.Stop()
 }

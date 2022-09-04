@@ -4,22 +4,25 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"google.golang.org/genproto/protobuf/field_mask"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-func MapProto(msg proto.Message, values map[string][]string) error {
+// DecodeValues decode url value into proto message.
+func DecodeValues(msg proto.Message, values url.Values) error {
 	for key, values := range values {
 		if err := populateFieldValues(msg.ProtoReflect(), strings.Split(key, "."), values); err != nil {
 			return err
@@ -280,12 +283,16 @@ func parseMessage(md protoreflect.MessageDescriptor, value string) (protoreflect
 	case "google.protobuf.BytesValue":
 		v, err := base64.StdEncoding.DecodeString(value)
 		if err != nil {
-			return protoreflect.Value{}, err
+			if v, err = base64.URLEncoding.DecodeString(value); err != nil {
+				return protoreflect.Value{}, err
+			}
 		}
 		msg = wrapperspb.Bytes(v)
 	case "google.protobuf.FieldMask":
-		fm := &field_mask.FieldMask{}
-		fm.Paths = append(fm.Paths, strings.Split(value, ",")...)
+		fm := &fieldmaskpb.FieldMask{}
+		for _, fv := range strings.Split(value, ",") {
+			fm.Paths = append(fm.Paths, jsonSnakeCase(fv))
+		}
 		msg = fm
 	case "google.protobuf.Value":
 		fm, err := structpb.NewValue(value)
@@ -293,8 +300,34 @@ func parseMessage(md protoreflect.MessageDescriptor, value string) (protoreflect
 			return protoreflect.Value{}, err
 		}
 		msg = fm
+	case "google.protobuf.Struct":
+		var v structpb.Struct
+		if err := protojson.Unmarshal([]byte(value), &v); err != nil {
+			return protoreflect.Value{}, err
+		}
+		msg = &v
 	default:
 		return protoreflect.Value{}, fmt.Errorf("unsupported message type: %q", string(md.FullName()))
 	}
 	return protoreflect.ValueOfMessage(msg.ProtoReflect()), nil
+}
+
+// jsonSnakeCase converts a camelCase identifier to a snake_case identifier,
+// according to the protobuf JSON specification.
+// references: https://github.com/protocolbuffers/protobuf-go/blob/master/encoding/protojson/well_known_types.go#L864
+func jsonSnakeCase(s string) string {
+	var b []byte
+	for i := 0; i < len(s); i++ { // proto identifiers are always ASCII
+		c := s[i]
+		if isASCIIUpper(c) {
+			b = append(b, '_')
+			c += 'a' - 'A' // convert to lowercase
+		}
+		b = append(b, c)
+	}
+	return string(b)
+}
+
+func isASCIIUpper(c byte) bool {
+	return 'A' <= c && c <= 'Z'
 }

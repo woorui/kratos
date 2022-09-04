@@ -6,17 +6,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-kratos/kratos/v2/errors"
-	"github.com/go-kratos/kratos/v2/middleware"
 
 	"github.com/go-kratos/kratos/v2/internal/host"
-	"github.com/stretchr/testify/assert"
 )
+
+var h = func(w http.ResponseWriter, r *http.Request) {
+	_ = json.NewEncoder(w).Encode(testData{Path: r.RequestURI})
+}
 
 type testKey struct{}
 
@@ -24,16 +28,68 @@ type testData struct {
 	Path string `json:"path"`
 }
 
-func TestServer(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(testData{Path: r.RequestURI})
+// handleFuncWrapper is a wrapper for http.HandlerFunc to implement http.Handler
+type handleFuncWrapper struct {
+	fn http.HandlerFunc
+}
+
+func (x *handleFuncWrapper) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	x.fn.ServeHTTP(writer, request)
+}
+
+func newHandleFuncWrapper(fn http.HandlerFunc) http.Handler {
+	return &handleFuncWrapper{fn: fn}
+}
+
+func TestServeHTTP(t *testing.T) {
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
 	}
+	mux := NewServer(Listener(ln))
+	mux.HandleFunc("/index", h)
+	mux.Route("/errors").GET("/cause", func(ctx Context) error {
+		return errors.BadRequest("xxx", "zzz").
+			WithMetadata(map[string]string{"foo": "bar"}).
+			WithCause(fmt.Errorf("error cause"))
+	})
+	if err = mux.WalkRoute(func(r RouteInfo) error {
+		t.Logf("WalkRoute: %+v", r)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if e, err := mux.Endpoint(); err != nil || e == nil || strings.HasSuffix(e.Host, ":0") {
+		t.Fatal(e, err)
+	}
+	srv := http.Server{Handler: mux}
+	go func() {
+		if err := srv.Serve(ln); err != nil {
+			if errors.Is(err, http.ErrServerClosed) {
+				return
+			}
+			panic(err)
+		}
+	}()
+	time.Sleep(time.Second)
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Log(err)
+	}
+}
+
+func TestServer(t *testing.T) {
 	ctx := context.Background()
 	srv := NewServer()
-	srv.HandleFunc("/index", fn)
-	srv.HandleFunc("/index/{id:[0-9]+}", fn)
+	srv.Handle("/index", newHandleFuncWrapper(h))
+	srv.HandleFunc("/index/{id:[0-9]+}", h)
+	srv.HandlePrefix("/test/prefix", newHandleFuncWrapper(h))
 	srv.HandleHeader("content-type", "application/grpc-web+json", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(testData{Path: r.RequestURI})
+	})
+	srv.Route("/errors").GET("/cause", func(ctx Context) error {
+		return errors.BadRequest("xxx", "zzz").
+			WithMetadata(map[string]string{"foo": "bar"}).
+			WithCause(fmt.Errorf("error cause"))
 	})
 
 	if e, err := srv.Endpoint(); err != nil || e == nil || strings.HasSuffix(e.Host, ":0") {
@@ -48,20 +104,65 @@ func TestServer(t *testing.T) {
 	time.Sleep(time.Second)
 	testHeader(t, srv)
 	testClient(t, srv)
-	assert.NoError(t, srv.Stop(ctx))
+	testAccept(t, srv)
+	time.Sleep(time.Second)
+	if srv.Stop(ctx) != nil {
+		t.Errorf("expected nil got %v", srv.Stop(ctx))
+	}
+}
+
+func testAccept(t *testing.T, srv *Server) {
+	tests := []struct {
+		method      string
+		path        string
+		contentType string
+	}{
+		{"GET", "/errors/cause", "application/json"},
+		{"GET", "/errors/cause", "application/proto"},
+	}
+	e, err := srv.Endpoint()
+	if err != nil {
+		t.Errorf("expected nil got %v", err)
+	}
+	client, err := NewClient(context.Background(), WithEndpoint(e.Host))
+	if err != nil {
+		t.Errorf("expected nil got %v", err)
+	}
+	for _, test := range tests {
+		req, err := http.NewRequest(test.method, e.String()+test.path, nil)
+		if err != nil {
+			t.Errorf("expected nil got %v", err)
+		}
+		req.Header.Set("Content-Type", test.contentType)
+		resp, err := client.Do(req)
+		if errors.Code(err) != 400 {
+			t.Errorf("expected 400 got %v", err)
+		}
+		if err == nil {
+			resp.Body.Close()
+		}
+	}
 }
 
 func testHeader(t *testing.T, srv *Server) {
 	e, err := srv.Endpoint()
-	assert.NoError(t, err)
+	if err != nil {
+		t.Errorf("expected nil got %v", err)
+	}
 	client, err := NewClient(context.Background(), WithEndpoint(e.Host))
-	assert.NoError(t, err)
+	if err != nil {
+		t.Errorf("expected nil got %v", err)
+	}
 	reqURL := fmt.Sprintf(e.String() + "/index")
 	req, err := http.NewRequest("GET", reqURL, nil)
-	assert.NoError(t, err)
+	if err != nil {
+		t.Errorf("expected nil got %v", err)
+	}
 	req.Header.Set("content-type", "application/grpc-web+json")
 	resp, err := client.Do(req)
-	assert.NoError(t, err)
+	if err != nil {
+		t.Errorf("expected nil got %v", err)
+	}
 	resp.Body.Close()
 }
 
@@ -69,20 +170,23 @@ func testClient(t *testing.T, srv *Server) {
 	tests := []struct {
 		method string
 		path   string
+		code   int
 	}{
-		{"GET", "/index"},
-		{"PUT", "/index"},
-		{"POST", "/index"},
-		{"PATCH", "/index"},
-		{"DELETE", "/index"},
+		{"GET", "/index", http.StatusOK},
+		{"PUT", "/index", http.StatusOK},
+		{"POST", "/index", http.StatusOK},
+		{"PATCH", "/index", http.StatusOK},
+		{"DELETE", "/index", http.StatusOK},
 
-		{"GET", "/index/1"},
-		{"PUT", "/index/1"},
-		{"POST", "/index/1"},
-		{"PATCH", "/index/1"},
-		{"DELETE", "/index/1"},
+		{"GET", "/index/1", http.StatusOK},
+		{"PUT", "/index/1", http.StatusOK},
+		{"POST", "/index/1", http.StatusOK},
+		{"PATCH", "/index/1", http.StatusOK},
+		{"DELETE", "/index/1", http.StatusOK},
 
-		{"GET", "/index/notfound"},
+		{"GET", "/index/notfound", http.StatusNotFound},
+		{"GET", "/errors/cause", http.StatusBadRequest},
+		{"GET", "/test/prefix/123111", http.StatusOK},
 	}
 	e, err := srv.Endpoint()
 	if err != nil {
@@ -101,13 +205,11 @@ func testClient(t *testing.T, srv *Server) {
 			t.Fatal(err)
 		}
 		resp, err := client.Do(req)
-		if test.path == "/index/notfound" && err != nil {
-			if e, ok := err.(*errors.Error); ok && e.Code == http.StatusNotFound {
-				continue
-			}
+		if errors.Code(err) != test.code {
+			t.Fatalf("want %v, but got %v", test, err)
 		}
 		if err != nil {
-			t.Fatal(err)
+			continue
 		}
 		if resp.StatusCode != 200 {
 			_ = resp.Body.Close()
@@ -129,13 +231,11 @@ func testClient(t *testing.T, srv *Server) {
 	for _, test := range tests {
 		var res testData
 		err := client.Invoke(context.Background(), test.method, test.path, nil, &res)
-		if test.path == "/index/notfound" && err != nil {
-			if e, ok := err.(*errors.Error); ok && e.Code == http.StatusNotFound {
-				continue
-			}
+		if errors.Code(err) != test.code {
+			t.Fatalf("want %v, but got %v", test, err)
 		}
 		if err != nil {
-			t.Fatalf("invoke  error %v", err)
+			continue
 		}
 		if res.Path != test.path {
 			t.Errorf("expected %s got %s", test.path, res.Path)
@@ -162,15 +262,21 @@ func BenchmarkServer(b *testing.B) {
 	}()
 	time.Sleep(time.Second)
 	port, ok := host.Port(srv.lis)
-	assert.True(b, ok)
+	if !ok {
+		b.Errorf("expected port got %v", srv.lis)
+	}
 	client, err := NewClient(context.Background(), WithEndpoint(fmt.Sprintf("127.0.0.1:%d", port)))
-	assert.NoError(b, err)
+	if err != nil {
+		b.Errorf("expected nil got %v", err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var res testData
 		err := client.Invoke(context.Background(), "POST", "/index", nil, &res)
-		assert.NoError(b, err)
+		if err != nil {
+			b.Errorf("expected nil got %v", err)
+		}
 	}
 	_ = srv.Stop(ctx)
 }
@@ -179,60 +285,89 @@ func TestNetwork(t *testing.T) {
 	o := &Server{}
 	v := "abc"
 	Network(v)(o)
-	assert.Equal(t, v, o.network)
+	if !reflect.DeepEqual(v, o.network) {
+		t.Errorf("expected %v got %v", v, o.network)
+	}
 }
 
 func TestAddress(t *testing.T) {
 	o := &Server{}
 	v := "abc"
 	Address(v)(o)
-	assert.Equal(t, v, o.address)
+	if !reflect.DeepEqual(v, o.address) {
+		t.Errorf("expected %v got %v", v, o.address)
+	}
 }
 
 func TestTimeout(t *testing.T) {
 	o := &Server{}
 	v := time.Duration(123)
 	Timeout(v)(o)
-	assert.Equal(t, v, o.timeout)
+	if !reflect.DeepEqual(v, o.timeout) {
+		t.Errorf("expected %v got %v", v, o.timeout)
+	}
 }
 
 func TestLogger(t *testing.T) {
 	// todo
 }
 
-func TestMiddleware(t *testing.T) {
-	o := &Server{}
-	v := []middleware.Middleware{
-		func(middleware.Handler) middleware.Handler { return nil },
-	}
-	Middleware(v...)(o)
-	assert.Equal(t, v, o.ms)
-}
-
 func TestRequestDecoder(t *testing.T) {
 	o := &Server{}
 	v := func(*http.Request, interface{}) error { return nil }
 	RequestDecoder(v)(o)
-	assert.NotNil(t, o.dec)
+	if o.dec == nil {
+		t.Errorf("expected nil got %v", o.dec)
+	}
 }
 
 func TestResponseEncoder(t *testing.T) {
 	o := &Server{}
 	v := func(http.ResponseWriter, *http.Request, interface{}) error { return nil }
 	ResponseEncoder(v)(o)
-	assert.NotNil(t, o.enc)
+	if o.enc == nil {
+		t.Errorf("expected nil got %v", o.enc)
+	}
 }
 
 func TestErrorEncoder(t *testing.T) {
 	o := &Server{}
 	v := func(http.ResponseWriter, *http.Request, error) {}
 	ErrorEncoder(v)(o)
-	assert.NotNil(t, o.ene)
+	if o.ene == nil {
+		t.Errorf("expected nil got %v", o.ene)
+	}
 }
 
 func TestTLSConfig(t *testing.T) {
 	o := &Server{}
 	v := &tls.Config{}
 	TLSConfig(v)(o)
-	assert.Equal(t, v, o.tlsConf)
+	if !reflect.DeepEqual(v, o.tlsConf) {
+		t.Errorf("expected %v got %v", v, o.tlsConf)
+	}
+}
+
+func TestStrictSlash(t *testing.T) {
+	o := &Server{}
+	v := true
+	StrictSlash(v)(o)
+	if !reflect.DeepEqual(v, o.strictSlash) {
+		t.Errorf("expected %v got %v", v, o.tlsConf)
+	}
+}
+
+func TestListener(t *testing.T) {
+	lis, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{}
+	Listener(lis)(s)
+	if !reflect.DeepEqual(s.lis, lis) {
+		t.Errorf("expected %v got %v", lis, s.lis)
+	}
+	if e, err := s.Endpoint(); err != nil || e == nil {
+		t.Errorf("expected not empty")
+	}
 }

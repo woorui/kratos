@@ -2,18 +2,18 @@ package direct
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/go-kratos/kratos/v2/registry"
 	"github.com/go-kratos/kratos/v2/selector"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestDirect(t *testing.T) {
 	b := &Builder{}
 	wn := b.Build(selector.NewNode(
+		"http",
 		"127.0.0.1:9090",
 		&registry.ServiceInstance{
 			ID:        "127.0.0.1:9090",
@@ -24,17 +24,26 @@ func TestDirect(t *testing.T) {
 		}))
 
 	done := wn.Pick()
-	assert.NotNil(t, done)
+	if done == nil {
+		t.Errorf("expect %v, got %v", nil, done)
+	}
 	time.Sleep(time.Millisecond * 10)
 	done(context.Background(), selector.DoneInfo{})
-	assert.Equal(t, float64(10), wn.Weight())
-	assert.Greater(t, time.Millisecond*15, wn.PickElapsed())
-	assert.Less(t, time.Millisecond*5, wn.PickElapsed())
+	if !reflect.DeepEqual(float64(10), wn.Weight()) {
+		t.Errorf("expect %v, got %v", float64(10), wn.Weight())
+	}
+	if time.Millisecond*20 <= wn.PickElapsed() {
+		t.Errorf("20ms <= wn.PickElapsed()(%s)", wn.PickElapsed())
+	}
+	if time.Millisecond*10 >= wn.PickElapsed() {
+		t.Errorf("10ms >= wn.PickElapsed()(%s)", wn.PickElapsed())
+	}
 }
 
 func TestDirectDefaultWeight(t *testing.T) {
 	b := &Builder{}
 	wn := b.Build(selector.NewNode(
+		"http",
 		"127.0.0.1:9090",
 		&registry.ServiceInstance{
 			ID:        "127.0.0.1:9090",
@@ -44,10 +53,18 @@ func TestDirectDefaultWeight(t *testing.T) {
 		}))
 
 	done := wn.Pick()
-	assert.NotNil(t, done)
+	if done == nil {
+		t.Errorf("expect %v, got %v", nil, done)
+	}
 	time.Sleep(time.Millisecond * 10)
 	done(context.Background(), selector.DoneInfo{})
-	assert.Equal(t, float64(100), wn.Weight())
-	assert.Greater(t, time.Millisecond*20, wn.PickElapsed())
-	assert.Less(t, time.Millisecond*5, wn.PickElapsed())
+	if !reflect.DeepEqual(float64(100), wn.Weight()) {
+		t.Errorf("expect %v, got %v", float64(100), wn.Weight())
+	}
+	if time.Millisecond*20 <= wn.PickElapsed() {
+		t.Errorf("time.Millisecond*20 <= wn.PickElapsed()(%s)", wn.PickElapsed())
+	}
+	if time.Millisecond*5 >= wn.PickElapsed() {
+		t.Errorf("time.Millisecond*5 >= wn.PickElapsed()(%s)", wn.PickElapsed())
+	}
 }

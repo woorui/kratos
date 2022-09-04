@@ -2,13 +2,12 @@ package selector
 
 import (
 	"context"
-	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/go-kratos/kratos/v2/middleware"
 	"github.com/go-kratos/kratos/v2/transport"
-	"github.com/stretchr/testify/assert"
 )
 
 var _ transport.Transporter = &Transport{}
@@ -167,8 +166,12 @@ func TestFunc(t *testing.T) {
 				return false
 			}).Build()(next)
 			reply, err := next(test.ctx, test.name)
-			assert.Equal(t, reply, "reply")
-			assert.Nil(t, err)
+			if err != nil {
+				t.Errorf("expect error is nil, but got %v", err)
+			}
+			if !reflect.DeepEqual(reply, "reply") {
+				t.Errorf("expect reply is reply,but got %v", reply)
+			}
 		})
 	}
 }
@@ -227,17 +230,32 @@ func TestHeaderFunc(t *testing.T) {
 				return false
 			}).Build()(next)
 			reply, err := next(test.ctx, test.name)
-			assert.Equal(t, reply, "reply")
-			assert.Nil(t, err)
+			if err != nil {
+				t.Errorf("expect error is nil, but got %v", err)
+			}
+			if !reflect.DeepEqual(reply, "reply") {
+				t.Errorf("expect reply is reply,but got %v", reply)
+			}
 		})
 	}
 }
 
 func testMiddleware(handler middleware.Handler) middleware.Handler {
 	return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
-		fmt.Println("before")
 		reply, err = handler(ctx, req)
-		fmt.Println("after")
 		return
+	}
+}
+
+func Test_RegexMatch(t *testing.T) {
+	if regexMatch("^\b(?", "something") {
+		t.Error("The invalid regex must not match.")
+	}
+}
+
+func Test_matches(t *testing.T) {
+	b := Builder{}
+	if b.matches(context.Background(), func(_ context.Context) (transport.Transporter, bool) { return nil, false }) {
+		t.Error("The matches method must return false.")
 	}
 }

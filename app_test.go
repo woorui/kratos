@@ -3,6 +3,7 @@ package kratos
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"reflect"
 	"sync"
 	"testing"
@@ -11,7 +12,6 @@ import (
 	"github.com/go-kratos/kratos/v2/registry"
 	"github.com/go-kratos/kratos/v2/transport/grpc"
 	"github.com/go-kratos/kratos/v2/transport/http"
-	"github.com/stretchr/testify/assert"
 )
 
 type mockRegistry struct {
@@ -60,19 +60,25 @@ func TestApp(t *testing.T) {
 func TestApp_ID(t *testing.T) {
 	v := "123"
 	o := New(ID(v))
-	assert.Equal(t, v, o.ID())
+	if !reflect.DeepEqual(v, o.ID()) {
+		t.Fatalf("o.ID():%s is not equal to v:%s", o.ID(), v)
+	}
 }
 
 func TestApp_Name(t *testing.T) {
 	v := "123"
 	o := New(Name(v))
-	assert.Equal(t, v, o.Name())
+	if !reflect.DeepEqual(v, o.Name()) {
+		t.Fatalf("o.Name():%s is not equal to v:%s", o.Name(), v)
+	}
 }
 
 func TestApp_Version(t *testing.T) {
 	v := "123"
 	o := New(Version(v))
-	assert.Equal(t, v, o.Version())
+	if !reflect.DeepEqual(v, o.Version()) {
+		t.Fatalf("o.Version():%s is not equal to v:%s", o.Version(), v)
+	}
 }
 
 func TestApp_Metadata(t *testing.T) {
@@ -81,10 +87,86 @@ func TestApp_Metadata(t *testing.T) {
 		"b": "2",
 	}
 	o := New(Metadata(v))
-	assert.Equal(t, v, o.Metadata())
+	if !reflect.DeepEqual(v, o.Metadata()) {
+		t.Fatalf("o.Metadata():%s is not equal to v:%s", o.Metadata(), v)
+	}
 }
 
 func TestApp_Endpoint(t *testing.T) {
+	v := []string{"https://go-kratos.dev", "localhost"}
+	var endpoints []*url.URL
+	for _, urlStr := range v {
+		if endpoint, err := url.Parse(urlStr); err != nil {
+			t.Errorf("invalid endpoint:%v", urlStr)
+		} else {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
+	o := New(Endpoint(endpoints...))
+	if instance, err := o.buildInstance(); err != nil {
+		t.Error("build instance failed")
+	} else {
+		o.instance = instance
+	}
+	if !reflect.DeepEqual(o.Endpoint(), v) {
+		t.Errorf("Endpoint() = %v, want %v", o.Endpoint(), v)
+	}
+}
+
+func TestApp_buildInstance(t *testing.T) {
+	want := struct {
+		id        string
+		name      string
+		version   string
+		metadata  map[string]string
+		endpoints []string
+	}{
+		id:      "1",
+		name:    "kratos",
+		version: "v1.0.0",
+		metadata: map[string]string{
+			"a": "1",
+			"b": "2",
+		},
+		endpoints: []string{"https://go-kratos.dev", "localhost"},
+	}
+	var endpoints []*url.URL
+	for _, urlStr := range want.endpoints {
+		if endpoint, err := url.Parse(urlStr); err != nil {
+			t.Errorf("invalid endpoint:%v", urlStr)
+		} else {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
+	app := New(
+		ID(want.id),
+		Name(want.name),
+		Version(want.version),
+		Metadata(want.metadata),
+		Endpoint(endpoints...),
+	)
+	if got, err := app.buildInstance(); err != nil {
+		t.Error("build got failed")
+	} else {
+		if got.ID != want.id {
+			t.Errorf("ID() = %v, want %v", got.ID, want.id)
+		}
+		if got.Name != want.name {
+			t.Errorf("Name() = %v, want %v", got.Name, want.name)
+		}
+		if got.Version != want.version {
+			t.Errorf("Version() = %v, want %v", got.Version, want.version)
+		}
+		if !reflect.DeepEqual(got.Endpoints, want.endpoints) {
+			t.Errorf("Endpoint() = %v, want %v", got.Endpoints, want.endpoints)
+		}
+		if !reflect.DeepEqual(got.Metadata, want.metadata) {
+			t.Errorf("Metadata() = %v, want %v", got.Metadata, want.metadata)
+		}
+	}
+}
+
+func TestApp_Context(t *testing.T) {
 	type fields struct {
 		id       string
 		version  string
@@ -147,7 +229,7 @@ func TestApp_Endpoint(t *testing.T) {
 				endpoint []string
 				metadata map[string]string
 			}{
-				id: "3", version: "v3", name: "kratos-v3", endpoint: []string{},
+				id: "3", version: "v3", name: "kratos-v3", endpoint: nil,
 				metadata: map[string]string{},
 			},
 		},

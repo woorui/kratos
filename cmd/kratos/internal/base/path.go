@@ -79,14 +79,14 @@ func copyDir(src, dst string, replaces, ignores []string) error {
 		}
 		srcfp := path.Join(src, fd.Name())
 		dstfp := path.Join(dst, fd.Name())
+		var e error
 		if fd.IsDir() {
-			if err = copyDir(srcfp, dstfp, replaces, ignores); err != nil {
-				return err
-			}
+			e = copyDir(srcfp, dstfp, replaces, ignores)
 		} else {
-			if err = copyFile(srcfp, dstfp, replaces); err != nil {
-				return err
-			}
+			e = copyFile(srcfp, dstfp, replaces)
+		}
+		if e != nil {
+			return e
 		}
 	}
 	return nil
@@ -103,7 +103,7 @@ func hasSets(name string, sets []string) bool {
 
 func Tree(path string, dir string) {
 	_ = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		if !info.IsDir() {
+		if err == nil && info != nil && !info.IsDir() {
 			fmt.Printf("%s %s (%v bytes)\n", color.GreenString("CREATED"), strings.Replace(path, dir+"/", "", -1), info.Size())
 		}
 		return nil

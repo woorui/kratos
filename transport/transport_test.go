@@ -2,9 +2,8 @@ package transport
 
 import (
 	"context"
+	"reflect"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 // mockTransport is a gRPC transport.
@@ -43,13 +42,25 @@ func TestServerTransport(t *testing.T) {
 
 	ctx = NewServerContext(ctx, &mockTransport{endpoint: "test_endpoint"})
 	tr, ok := FromServerContext(ctx)
-
-	assert.Equal(t, true, ok)
-	assert.NotNil(t, tr)
+	if !ok {
+		t.Errorf("expected:%v got:%v", true, ok)
+	}
+	if tr == nil {
+		t.Errorf("expected:%v got:%v", nil, tr)
+	}
 	mtr, ok := tr.(*mockTransport)
-	assert.Equal(t, true, ok)
-	assert.NotNil(t, mtr)
-	assert.Equal(t, mtr.endpoint, "test_endpoint")
+	if !ok {
+		t.Errorf("expected:%v got:%v", true, ok)
+	}
+	if mtr == nil {
+		t.Errorf("expected:%v got:%v", nil, mtr)
+	}
+	if mtr.Kind().String() != KindGRPC.String() {
+		t.Errorf("expected:%v got:%v", KindGRPC.String(), mtr.Kind().String())
+	}
+	if !reflect.DeepEqual(mtr.endpoint, "test_endpoint") {
+		t.Errorf("expected:%v got:%v", "test_endpoint", mtr.endpoint)
+	}
 }
 
 func TestClientTransport(t *testing.T) {
@@ -57,11 +68,20 @@ func TestClientTransport(t *testing.T) {
 
 	ctx = NewClientContext(ctx, &mockTransport{endpoint: "test_endpoint"})
 	tr, ok := FromClientContext(ctx)
-
-	assert.Equal(t, true, ok)
-	assert.NotNil(t, tr)
+	if !ok {
+		t.Errorf("expected:%v got:%v", true, ok)
+	}
+	if tr == nil {
+		t.Errorf("expected:%v got:%v", nil, tr)
+	}
 	mtr, ok := tr.(*mockTransport)
-	assert.Equal(t, true, ok)
-	assert.NotNil(t, mtr)
-	assert.Equal(t, mtr.endpoint, "test_endpoint")
+	if !ok {
+		t.Errorf("expected:%v got:%v", true, ok)
+	}
+	if mtr == nil {
+		t.Errorf("expected:%v got:%v", nil, mtr)
+	}
+	if !reflect.DeepEqual(mtr.endpoint, "test_endpoint") {
+		t.Errorf("expected:%v got:%v", "test_endpoint", mtr.endpoint)
+	}
 }

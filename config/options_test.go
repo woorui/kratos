@@ -2,9 +2,8 @@ package config
 
 import (
 	"reflect"
+	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestDefaultDecoder(t *testing.T) {
@@ -15,10 +14,12 @@ func TestDefaultDecoder(t *testing.T) {
 	}
 	target := make(map[string]interface{})
 	err := defaultDecoder(src, target)
-	assert.Nil(t, err)
-	assert.Equal(t, map[string]interface{}{
-		"service": []byte("config"),
-	}, target)
+	if err != nil {
+		t.Fatal("err is not nil")
+	}
+	if !reflect.DeepEqual(target, map[string]interface{}{"service": []byte("config")}) {
+		t.Fatal(`target is not equal to map[string]interface{}{"service": "config"}`)
+	}
 
 	src = &KeyValue{
 		Key:    "service.name.alias",
@@ -27,14 +28,18 @@ func TestDefaultDecoder(t *testing.T) {
 	}
 	target = make(map[string]interface{})
 	err = defaultDecoder(src, target)
-	assert.Nil(t, err)
-	assert.Equal(t, map[string]interface{}{
+	if err != nil {
+		t.Fatal("err is not nil")
+	}
+	if !reflect.DeepEqual(map[string]interface{}{
 		"service": map[string]interface{}{
 			"name": map[string]interface{}{
 				"alias": []byte("2233"),
 			},
 		},
-	}, target)
+	}, target) {
+		t.Fatal(`target is not equal to map[string]interface{}{"service": map[string]interface{}{"name": map[string]interface{}{"alias": []byte("2233")}}}`)
+	}
 }
 
 func TestDefaultResolver(t *testing.T) {
@@ -144,7 +149,9 @@ func TestDefaultResolver(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			err := defaultResolver(data)
-			assert.NoError(t, err)
+			if err != nil {
+				t.Fatal(`err is not nil`)
+			}
 			rd := reader{
 				values: data,
 			}
@@ -153,19 +160,27 @@ func TestDefaultResolver(t *testing.T) {
 				switch test.expect.(type) {
 				case int:
 					if actual, err = v.Int(); err == nil {
-						assert.Equal(t, test.expect, int(actual.(int64)), "int value should be equal")
+						if !reflect.DeepEqual(test.expect.(int), int(actual.(int64))) {
+							t.Fatal(`expect is not equal to actual`)
+						}
 					}
 				case string:
 					if actual, err = v.String(); err == nil {
-						assert.Equal(t, test.expect, actual, "string value should be equal")
+						if !reflect.DeepEqual(test.expect, actual) {
+							t.Fatal(`expect is not equal to actual`)
+						}
 					}
 				case bool:
 					if actual, err = v.Bool(); err == nil {
-						assert.Equal(t, test.expect, actual, "bool value should be equal")
+						if !reflect.DeepEqual(test.expect, actual) {
+							t.Fatal(`expect is not equal to actual`)
+						}
 					}
 				case float64:
 					if actual, err = v.Float(); err == nil {
-						assert.Equal(t, test.expect, actual, "float64 value should be equal")
+						if !reflect.DeepEqual(test.expect, actual) {
+							t.Fatal(`expect is not equal to actual`)
+						}
 					}
 				default:
 					actual = v.Load()
@@ -181,5 +196,33 @@ func TestDefaultResolver(t *testing.T) {
 				t.Error("value path not found")
 			}
 		})
+	}
+}
+
+func TestExpand(t *testing.T) {
+	tests := []struct {
+		input   string
+		mapping func(string) string
+		want    string
+	}{
+		{
+			input: "${a}",
+			mapping: func(s string) string {
+				return strings.ToUpper(s)
+			},
+			want: "A",
+		},
+		{
+			input: "a",
+			mapping: func(s string) string {
+				return strings.ToUpper(s)
+			},
+			want: "a",
+		},
+	}
+	for _, tt := range tests {
+		if got := expand(tt.input, tt.mapping); got != tt.want {
+			t.Errorf("expand() want: %s, got: %s", tt.want, got)
+		}
 	}
 }
